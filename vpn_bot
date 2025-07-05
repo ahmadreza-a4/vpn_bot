@@ -1,0 +1,198 @@
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
+    MessageHandler, filters, ConversationHandler, ContextTypes
+)
+
+# ====== تنظیمات ======
+ADMIN_ID = 694246194  # آیدی عددی مدیر
+BOT_TOKEN = "8162063193:AAH3ouuNYxoTKGN4zIncXEwfDIOPYpyd6iE"
+CARD_NUMBER = "6037 9982 0796 4007"
+CARD_OWNER = "احمدرضا اله‌دادی"
+
+# مراحل گفتگو
+LOCATION, SERVICE_TYPE, DURATION, TRAFFIC, WAIT_PAYMENT = range(5)
+
+# ====== قیمت‌ها ======
+PRICES = {
+    ("vmess", 1, "20"): 30000,
+    ("vless", 1, "20"): 35000,
+    ("vmess", 1, "50"): 60000,
+    ("vless", 1, "50"): 65000,
+    ("vmess", 1, "100"): 100000,
+    ("vless", 1, "100"): 110000,
+    ("vmess", 3, "50"): 120000,
+    ("vless", 3, "50"): 130000,
+    ("vmess", 3, "100"): 180000,
+    ("vless", 3, "100"): 190000,
+    ("vmess", 3, "200"): 250000,
+    ("vless", 3, "200"): 270000,
+}
+
+# شروع ربات
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("فرانسه", callback_data="فرانسه")],
+        [InlineKeyboardButton("سوئد", callback_data="سوئد")],
+        [InlineKeyboardButton("اتریش", callback_data="اتریش")],
+        [InlineKeyboardButton("هلند", callback_data="هلند")]
+    ]
+    await update.message.reply_text("🌍 لطفاً لوکیشن را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return LOCATION
+
+# انتخاب لوکیشن
+async def select_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['location'] = query.data
+
+    keyboard = [
+        [InlineKeyboardButton("VMESS", callback_data="vmess")],
+        [InlineKeyboardButton("VLESS", callback_data="vless")]
+    ]
+    await query.edit_message_text("💠 لطفاً نوع سرویس را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return SERVICE_TYPE
+
+# انتخاب نوع سرویس
+async def select_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['service_type'] = query.data
+
+    keyboard = [
+        [InlineKeyboardButton("1 ماهه", callback_data="1")],
+        [InlineKeyboardButton("3 ماهه", callback_data="3")]
+    ]
+    await query.edit_message_text("🕒 لطفاً بازه زمانی را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return DURATION
+
+# انتخاب مدت سرویس
+async def select_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    duration = int(query.data)
+    context.user_data['duration'] = duration
+
+    options = ["20", "30", "50", "80", "100"] if duration == 1 else ["50", "100", "200"]
+    keyboard = [[InlineKeyboardButton(f"{o} گیگ", callback_data=o)] for o in options]
+    await query.edit_message_text("📦 لطفاً حجم سرویس را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return TRAFFIC
+
+# انتخاب حجم و نمایش هزینه + کارت
+async def select_traffic(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    traffic = query.data
+    duration = context.user_data['duration']
+    service_type = context.user_data['service_type']
+
+    context.user_data['traffic'] = traffic
+    key = (service_type, duration, traffic)
+    price = PRICES.get(key)
+
+    if price is None:
+        await query.edit_message_text("❌ برای این سرویس قیمتی ثبت نشده است. لطفاً با مدیر تماس بگیرید.")
+        return ConversationHandler.END
+
+    context.user_data['price'] = price
+
+    response = (
+        f"📋 مشخصات سفارش:\n"
+        f"🌍 لوکیشن: {context.user_data['location']}\n"
+        f"💠 نوع سرویس: {service_type.upper()}\n"
+        f"🕒 مدت: {duration} ماهه\n"
+        f"📦 حجم: {traffic} گیگ\n"
+        f"💰 مبلغ: {price:,} تومان\n\n"
+        f"💳 شماره کارت:\n`{CARD_NUMBER}`\n"
+        f"👤 به نام: {CARD_OWNER}\n\n"
+        f"لطفاً پس از واریز، فیش پرداخت را به صورت عکس ارسال کنید."
+    )
+
+    await query.edit_message_text(response, parse_mode="Markdown")
+    return WAIT_PAYMENT
+
+# دریافت فیش پرداخت
+async def receive_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    if update.message.photo:
+        photo = update.message.photo[-1]
+        caption = (
+            f"🧾 فیش واریزی از کاربر @{user.username or 'بدون‌نام'} ({user.id})\n"
+            f"🌍 {context.user_data.get('location')}\n"
+            f"💠 {context.user_data.get('service_type')}\n"
+            f"🕒 {context.user_data.get('duration')} ماهه\n"
+            f"📦 {context.user_data.get('traffic')} گیگ\n"
+            f"💰 مبلغ: {context.user_data.get('price'):,} تومان\n\n"
+            f"⚠️ لطفاً کانفیگ را ریپلای کرده و ارسال نمایید."
+        )
+        await context.bot.send_photo(chat_id=ADMIN_ID, photo=photo.file_id, caption=caption)
+        await update.message.reply_text("✅ فیش شما دریافت شد. منتظر تأیید و ارسال کانفیگ از طرف مدیر باشید.")
+    else:
+        await update.message.reply_text("❌ لطفاً عکس فیش را ارسال کنید.")
+    return ConversationHandler.END
+
+# ارسال کانفیگ توسط ادمین
+async def send_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    if update.message.reply_to_message:
+        caption = update.message.reply_to_message.caption
+        user_id = None
+        for token in caption.split():
+            if token.startswith("(") and token.endswith(")"):
+                try:
+                    user_id = int(token.strip("()"))
+                    break
+                except ValueError:
+                    continue
+
+        if user_id:
+            await context.bot.send_message(chat_id=user_id, text=f"🔐 کانفیگ شما:\n\n{update.message.text}")
+            await update.message.reply_text("✅ کانفیگ برای کاربر ارسال شد.")
+        else:
+            await update.message.reply_text("❌ آیدی کاربر شناسایی نشد.")
+    else:
+        await update.message.reply_text("❗ لطفاً پیام فیش پرداخت را ریپلای کرده و کانفیگ را ارسال کنید.")
+
+# تنظیم قیمت توسط مدیر
+async def set_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return await update.message.reply_text("⛔ شما مجاز به استفاده از این دستور نیستید.")
+
+    try:
+        service_type = context.args[0].lower()  # vmess / vless
+        duration = int(context.args[1])         # 1 یا 3
+        traffic = context.args[2]               # مثلاً "100"
+        price = int(context.args[3])            # مبلغ
+
+        PRICES[(service_type, duration, traffic)] = price
+        await update.message.reply_text(f"✅ قیمت {service_type.upper()} {duration} ماهه / {traffic} گیگ به {price:,} تومان تغییر یافت.")
+    except:
+        await update.message.reply_text("❌ دستور نامعتبر.\nفرمت صحیح:\n/setprice <vmess|vless> <مدت> <حجم> <قیمت>\nمثال:\n/setprice vless 1 50 70000")
+
+# راه‌اندازی ربات
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    conv = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            LOCATION: [CallbackQueryHandler(select_location)],
+            SERVICE_TYPE: [CallbackQueryHandler(select_service)],
+            DURATION: [CallbackQueryHandler(select_duration)],
+            TRAFFIC: [CallbackQueryHandler(select_traffic)],
+            WAIT_PAYMENT: [MessageHandler(filters.PHOTO, receive_payment)],
+        },
+        fallbacks=[]
+    )
+
+    app.add_handler(conv)
+    app.add_handler(CommandHandler("setprice", set_price))
+    app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, send_config))
+
+    print("🤖 ربات در حال اجراست...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
